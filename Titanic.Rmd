@@ -1,0 +1,296 @@
+---
+title: "Titanic"
+author: "Gilbert Toroitich Tarus"
+date: "14/04/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache = TRUE,warning = FALSE)
+set.seed(1234)
+```
+
+## **Introduction**
+
+This is a submission for the final project in Coursera’s Practical Machine Learning by Johns Hopkins University, third course in the Data Science: Statistics and Machine Learning Specialization.
+
+This is a submission for the machine learning competition on [https://www.kaggle.com/](Kaggle). The aim of this competition is use machine learning to create a model that predicts which passengers survived the Titanic shipwreck.
+
+### **Summary**
+
+In this report, we trained five models: **Generalized Linear Model (GLM)**,**Random Forest**,**Decision Trees**, **Support Vector Machine (svm)** and **Gradient Boost Model** using k-folds cross validation for purposes of reducing noise and obtaining patterns in the training data. This models were chosen because the outcome variable is a class variable. We split the train.csv data set into training and validation sets. The test.csv data set provided was left for the purposes of the final prediction.
+
+From the four models, the **Gradient Boosting Machines model had the highest accuracy level about 81% and a very small out of sample error about 19%**. We then use this model to do the final prediction.
+
+
+### **Data**
+
+The training data for this project are available here:
+
+
+[https://www.kaggle.com/c/titanic/data?select=train.csv](https://www.kaggle.com/c/titanic/data?select=train.csv)
+
+The test data are available here:
+
+[https://www.kaggle.com/c/titanic/data?select=test.csv](https://www.kaggle.com/c/titanic/data?select=test.csv)
+
+MOre information for this competition and data are found here:
+
+[https://www.kaggle.com/c/titanic/overview](https://www.kaggle.com/c/titanic/overview)
+
+#### **Load the required packages**
+
+```{r packages}
+library(caret);library(ggplot2);library(dplyr)
+library(skimr)
+library(naniar)
+library(kernlab)
+library(randomForest)
+library(rattle)
+```
+
+## **Getting Data and cleaning data**
+
+```{r data}
+tit_train <- read.csv("data/train.csv")
+tit_test <- read.csv("data/test.csv")
+dim(tit_train);dim(tit_test)
+```
+
+```{r head}
+view(head(tit_train[complete.cases(tit_train),],10))
+```
+
+```{r}
+names(tit_train)
+```
+```{r glimpse}
+glimpse(tit_train)
+```
+
+```{r summary}
+summary(tit_train)
+```
+
+
+##### **Removing unnecessary and missing variables.**
+
+For this submission, we cannot do much transformation on PassengerId, Name and Ticket variables in the data. For the purposes of modeling, we remove this variables from the data.
+
+```{r rm}
+tit_train <- tit_train %>% select(-PassengerId,-Name,-Ticket, -Cabin)
+```
+
+##### **Check for the missing values**
+
+```{r miss_sum}
+tit_train %>% miss_var_summary()
+```
+
+The variable age has 177 missing values. This is about 19.87% of the data. Since this value is not large enough to omit, we may choose to impute the missing values with the **mean** or **median**. To chose the better measure, we may have a look at the distribution of age.
+
+```{r plot}
+ggplot(tit_train,aes(x = Age))+
+ geom_density()+
+ geom_vline(xintercept =c(mean(tit_train$Age,na.rm = TRUE), median(tit_train$Age, na.rm = TRUE)), color= c("red","black"))
+```
+The two measures are close to each other. We can their choose any of them. Here we will choose to use the median to impute for the missing values.
+
+```{r impute}
+tit_train <- tit_train %>% impute_median_all()
+tit_test <- tit_test %>% impute_median_all()
+```
+
+
+##### **Preprocessing**
+
+```{r trsn}
+# Factor variables
+tit_train <- tit_train %>% 
+ mutate(Pclass = as.factor(Pclass), Sex = as.factor(Sex),Parch = as.factor(Parch), Embarked = as.factor(Embarked),Survived = as.factor(Survived))
+tit_test <- tit_test %>% 
+ mutate(Pclass = as.factor(Pclass), Sex = as.factor(Sex),Parch = as.factor(Parch), Embarked = as.factor(Embarked))
+
+levels(tit_train$Parch) <- c("0", "1", "2", "3", "4", "5", "6","9")
+```
+
+**Removing zero and near zero variance predictors**
+
+```{r nzv}
+nzv <- nearZeroVar(tit_train)
+nzv
+```
+From the above output, there are no zero and near zero variance variables.
+
+**Check for correlated data**
+
+```{r cor}
+num <- select_if(tit_train,is.numeric)
+highCor<- findCorrelation(cor(num),cutoff = 0.9)
+highCor
+```
+
+The ouput above shows that there are no correlated data.
+
+## **Splitting data to training and validation sets**
+
+We can now split the data **tit_train** to **training** and **validation** data sets. However, the test set (**"tit_test"**) will be left for the final prediction.
+
+```{r splt}
+inTrain <- createDataPartition(y=tit_train$Survived, p=0.75, list=FALSE)
+training <- tit_train[inTrain,]
+validation <- tit_train[-inTrain,]
+```
+
+## **Creating and Testing the Models**
+
+We are going to fit three models: **glm**,**Random Forest**,**Decision Trees**, **gbm** and **SVM** models for classification to check which algorithm is much better to fit the data.
+
+## **Modeling**
+
+### **Cross validation**
+
+To obtain the correct patterns from the data and ensure it is not getting too much noise, we use k-folds cross validation technique.
+
+```{r trc}
+train_control <- trainControl(method="cv", number=5)
+```
+
+### **Generalized Linear Model**
+
+```{r glm}
+glmFit <- train(Survived ~ ., data = training, method = "glm", family = "binomial", trControl = train_control)
+# Predict probabilities
+glmPred <- predict(glmFit, validation)
+cmGlm <- confusionMatrix(glmPred,validation$Survived)
+cmGlm
+```
+
+The GML model above as an accuracy of `r round(cmGlm$overall["Accuracy"]*100,2)`% and an out of sample error of about `r round((1-cmGlm$overall["Accuracy"])*100,2)`%. This is relative low.
+
+### **Random Forest Model**
+
+```{r rf}
+rfMod <- train(Survived ~., data=training, method="rf", trControl = train_control, tuneLength = 5)
+
+rfPred <- predict(rfMod, validation)
+cmRF <- confusionMatrix(rfPred, validation$Survived)
+cmRF
+```
+The random forest model above as an accuracy of `r round(cmRF$overall["Accuracy"]*100,2)`% and an out of sample error of about `r round((1-cmRF$overall["Accuracy"])*100,2)`% . This is relative high accuracy.
+
+### **Decision Tree**
+
+```{r Dtree}
+treeMod <- train(Survived~., data=training, method="rpart", trControl = train_control, tuneLength = 5)
+#Prediction
+predTrees <- predict(treeMod, validation)
+cmTrees <- confusionMatrix(predTrees, validation$Survived)
+cmTrees
+```
+The random forest model above as an accuracy of `r round(cmTrees$overall["Accuracy"]*100,2)`% and an out of sample error of about `r round((1-cmTrees$overall["Accuracy"])*100,2)`% . This is relative high accuracy and it is close to that of Random Forest.
+
+
+## **Support Vector Machine**
+
+```{r svmMod}
+svmMod <- train(Survived ~., data=training, method="svmRadial", trControl = train_control, tuneLength = 5, verbose = FALSE)
+
+# Prediction
+predSvm <- predict(svmMod, validation)
+
+#Confusion matrix
+cmSvm <- confusionMatrix(predSvm,validation$Survived)
+cmSvm
+```
+The random forest model above as an accuracy of `r round(cmSvm$overall["Accuracy"]*100,2)`% and an out of sample error of about `r round((1-cmSvm$overall["Accuracy"])*100,2)`% . This is relative high accuracy and it is relatively lower than that of  Random Forest and Support Vector Machine.
+
+## **GBM**
+
+```{r GbmMod}
+gbmMod <- train(Survived ~., data=training, method="gbm", trControl = train_control, tuneLength = 5, verbose = FALSE)
+
+# Prediction
+predGbm <- predict(gbmMod, validation)
+
+#Confusion matrix
+cmGbm <- confusionMatrix(predGbm,validation$Survived)
+cmGbm
+```
+The random forest model above as an accuracy of `r round(cmSvm$overall["Accuracy"]*100,2)`% and an out of sample error of about `r round((1-cmSvm$overall["Accuracy"])*100,2)`% . This is relative high accuracy and it is relatively lower than that of  Random Forest and Support Vector Machine.
+
+**Accuracy and Out of Sample Error**
+
+```{r Acc_OSE}
+GLM <- c(cmGlm$overall["Accuracy"],1-c(cmGlm$overall["Accuracy"]))
+DTree <- c(cmTrees$overall["Accuracy"],1-c(cmTrees$overall["Accuracy"]))
+RF <- c(cmRF$overall["Accuracy"],1-c(cmRF$overall["Accuracy"]))
+SVM <- c(cmSvm$overall["Accuracy"],1-c(cmSvm$overall["Accuracy"]))
+GBM <- c(cmGbm$overall["Accuracy"],1-c(cmGbm$overall["Accuracy"]))
+
+Output <- rbind(GLM,DTree,RF,SVM,GBM)
+colnames(Output) <- c("Accuracy","oo_S_Err")
+
+Output <- Output %>% apply(.,2, round,3)
+Output[order(-Output[,1]),]
+```
+
+
+The best model is the Gradient Boosting Machines model, with `r GBM[1]` accuracy and `r GBM[2]` out of sample error rate. We find that to be a sufficient enough model to use for our test sets.
+
+## **Predictions on Test Set**
+
+We will use the Gradient Boosting Machines model to do prediction on the test set since it has the highest accuracy and hence low out of sample error.
+
+## **Gradient Boosting Machines model Predictions on the test set**
+
+```{r PredTest}
+testPredGBM <- predict(gbmMod,newdata = tit_test)
+```
+
+
+
+```{r echo=FALSE, results='hide'}
+My_predictions = data.frame(PassengerId = tit_test$PassengerId,Survived = testPredGBM)
+write.csv(My_predictions, "test_predictions.csv",row.names = FALSE)
+```
+
+## **Appendix**
+
+**Feature Plot**
+
+```{r}
+featurePlot(x = tit_train[,-1], y = tit_train$Survived,plot = "pairs")
+```
+
+
+**correlation matrix of variables in training set**
+
+```{r}
+library(psych)
+cor.plot(num,xlas = 2)
+```
+
+Plotting the models
+
+#### **Random Forest model**
+
+```{r}
+plot(rfMod)
+```
+
+#### **Decision Trees**
+
+```{r}
+plot(treeMod)
+```
+
+```{r tree}
+fancyRpartPlot(treeMod$finalModel)
+```
+
+#### **Support Vector Machine**
+
+```{r}
+plot(svmMod, plotType = "line")
+```
